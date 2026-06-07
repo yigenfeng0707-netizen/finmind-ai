@@ -1,21 +1,53 @@
 import sqlite3
 import json
 import logging
+import os
+import tempfile
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path(__file__).resolve().parent.parent.parent / "finmind.db"
+# Use /tmp on Vercel (writable), fallback to project dir locally
+def _get_db_path():
+    """Determine the best database path for the current environment."""
+    # Vercel sets VERCEL=1
+    if os.getenv("VERCEL") == "1":
+        return os.path.join(tempfile.gettempdir(), "finmind.db")
+    # Local development
+    return str(Path(__file__).resolve().parent.parent.parent / "finmind.db")
+
+DB_PATH = _get_db_path()
 
 
 class DatabaseService:
-    """Service for SQLite database operations."""
+    """Service for SQLite database operations. Gracefully handles serverless environments."""
 
     def __init__(self, db_path: str = None):
-        self.db_path = db_path or str(DB_PATH)
-        self._init_db()
+        self.db_path = db_path or DB_PATH
+        self._initialized = False
+        self._init_error = None
+        # Try to initialize, but don't crash if it fails
+        try:
+            self._init_db()
+            self._initialized = True
+        except Exception as e:
+            self._init_error = str(e)
+            logger.warning(f"Database initialization failed (non-fatal): {e}")
+
+    def _ensure_init(self) -> bool:
+        """Ensure database is initialized. Returns True if available."""
+        if self._initialized:
+            return True
+        # Retry once (e.g., /tmp might become available)
+        try:
+            self._init_db()
+            self._initialized = True
+            return True
+        except Exception as e:
+            logger.warning(f"Database still unavailable: {e}")
+            return False
 
     def _init_db(self):
         """Initialize database tables."""
@@ -66,6 +98,8 @@ class DatabaseService:
 
     def save_analysis(self, result: Dict[str, Any]) -> int:
         """Save analysis result to database."""
+        if not self._ensure_init():
+            return -1
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -73,7 +107,6 @@ class DatabaseService:
             recommendation = result.get("recommendation", {})
             agent_results = result.get("agent_results", {})
 
-            # Check if any agent used LLM
             llm_enhanced = any(
                 ar.get("llm_enhanced", False)
                 for ar in agent_results.values()
@@ -116,6 +149,8 @@ class DatabaseService:
         self, symbol: str = None, limit: int = 50
     ) -> List[Dict[str, Any]]:
         """Get analysis history, optionally filtered by symbol."""
+        if not self._ensure_init():
+            return []
         try:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
@@ -149,6 +184,8 @@ class DatabaseService:
 
     def get_analysis_stats(self) -> Dict[str, Any]:
         """Get overall analysis statistics."""
+        if not self._ensure_init():
+            return {"total_analyses": 0}
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -193,6 +230,8 @@ class DatabaseService:
 
     def add_to_watchlist(self, symbol: str) -> bool:
         """Add a symbol to the watchlist."""
+        if not self._ensure_init():
+            return False
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -209,6 +248,8 @@ class DatabaseService:
 
     def get_watchlist(self) -> List[str]:
         """Get all watchlist symbols."""
+        if not self._ensure_init():
+            return []
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
