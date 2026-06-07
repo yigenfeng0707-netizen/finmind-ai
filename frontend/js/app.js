@@ -2,6 +2,28 @@
 
 const API_BASE = '/api/v1';
 
+// API Key management
+function getApiKey() {
+    return localStorage.getItem('finmind_api_key') || '';
+}
+
+function setApiKey(key) {
+    localStorage.setItem('finmind_api_key', key);
+}
+
+function getApiHeaders() {
+    const key = getApiKey();
+    const headers = { 'Content-Type': 'application/json' };
+    if (key) headers['X-API-Key'] = key;
+    return headers;
+}
+
+function getApiUrl(endpoint) {
+    const key = getApiKey();
+    const sep = endpoint.includes('?') ? '&' : '?';
+    return key ? `${API_BASE}${endpoint}${sep}api_key=${encodeURIComponent(key)}` : `${API_BASE}${endpoint}`;
+}
+
 // Utility: Escape HTML to prevent XSS
 function escapeHtml(text) {
     if (!text) return '';
@@ -28,6 +50,11 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initializeApp() {
+    // Restore saved API key
+    const savedKey = getApiKey();
+    const keyInput = document.getElementById('apiKeyInput');
+    if (keyInput && savedKey) keyInput.value = savedKey;
+
     loadMarketOverview();
     loadNewsFeed();
 }
@@ -101,7 +128,7 @@ function toggleTheme() {
 // API Calls
 async function loadMarketOverview() {
     try {
-        const response = await fetch(`${API_BASE}/market-overview`);
+        const response = await fetch(getApiUrl('/market-overview'));
         const data = await response.json();
 
         if (data.status === 'success') {
@@ -150,7 +177,7 @@ async function analyzeStock() {
     });
 
     try {
-        const response = await fetch(`${API_BASE}/analyze/${symbol}`);
+        const response = await fetch(getApiUrl(`/analyze/${symbol}`));
         const data = await response.json();
 
         if (data.status === 'success') {
@@ -337,7 +364,7 @@ async function loadNewsFeed() {
     const container = document.getElementById('newsFeed');
 
     try {
-        const response = await fetch(`${API_BASE}/market-overview`);
+        const response = await fetch(getApiUrl('/market-overview'));
         const data = await response.json();
 
         if (data.status === 'success' && data.market_news) {
@@ -512,7 +539,7 @@ let chartSeries = {};
 
 async function loadChart(symbol) {
     try {
-        const response = await fetch(`${API_BASE}/chart-data/${symbol}?period=6mo`);
+        const response = await fetch(getApiUrl('/chart-data/' + symbol + '?period=6mo'));
         const data = await response.json();
 
         if (data.status === 'success' && data.candles) {
@@ -692,7 +719,7 @@ function renderChart(data) {
 // Backtest
 async function loadBacktest(symbol) {
     try {
-        const response = await fetch(`${API_BASE}/backtest/${symbol}`);
+        const response = await fetch(getApiUrl('/backtest/' + symbol));
         const data = await response.json();
 
         if (data.status === 'success') {

@@ -38,7 +38,13 @@
             <div class="sidebar-footer">
                 <div class="agent-status">
                     <span class="status-dot active"></span>
-                    4 Agents Active
+                    5 Agents Active
+                </div>
+                <div class="api-key-section" style="margin-top: 16px; padding: 12px; background: rgba(255,255,255,0.05); border-radius: 8px;">
+                    <label style="font-size: 11px; color: var(--text-secondary); display: block; margin-bottom: 6px;">API Access Key</label>
+                    <input type="password" id="apiKeyInput" placeholder="Enter key if required" 
+                           style="width: 100%; padding: 6px 8px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 12px;"
+                           onchange="setApiKey(this.value)">
                 </div>
             </div>
         </aside>

@@ -32,6 +32,10 @@ MAX_CONCURRENT_AGENTS = 4
 AGENT_TIMEOUT = 30  # seconds
 ANALYSIS_CACHE_TTL = 300  # 5 minutes
 
+# API Access Control
+API_ACCESS_KEY = os.getenv("API_ACCESS_KEY", "")  # Set this to protect your API from abuse
+API_ACCESS_ENABLED = os.getenv("API_ACCESS_ENABLED", "false").lower() == "true"
+
 # LLM Configuration
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai")  # openai or anthropic
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")

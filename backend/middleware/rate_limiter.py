@@ -1,4 +1,4 @@
-"""Rate limiting middleware for API protection."""
+"""Rate limiting and API access control middleware."""
 import time
 from collections import defaultdict
 from typing import Dict, Tuple
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class RateLimiter(BaseHTTPMiddleware):
-    """Simple in-memory rate limiter."""
+    """Simple in-memory rate limiter with optional API key authentication."""
 
     def __init__(self, app, requests_per_minute: int = 60, burst: int = 10):
         super().__init__(app)
@@ -19,23 +19,30 @@ class RateLimiter(BaseHTTPMiddleware):
         self.requests: Dict[str, Tuple[int, float]] = defaultdict(lambda: (0, time.time()))
 
     async def dispatch(self, request: Request, call_next):
-        # Skip rate limiting for health checks and static files
+        # Skip auth/rate limiting for health checks, docs, and static files
         path = request.url.path
-        if path in ["/api/v1/health", "/api/info"] or path.startswith("/ws/"):
+        if path in ["/api/v1/health", "/api/info", "/docs", "/openapi.json"] or path.startswith("/ws/"):
             return await call_next(request)
 
-        # Get client identifier (IP address)
-        client_id = request.client.host if request.client else "unknown"
+        # API Key authentication (if enabled)
+        from config import API_ACCESS_ENABLED, API_ACCESS_KEY
+        if API_ACCESS_ENABLED and API_ACCESS_KEY:
+            api_key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
+            if api_key != API_ACCESS_KEY:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid or missing API key. Pass X-API-Key header or api_key query param."
+                )
 
+        # Rate limiting
+        client_id = request.client.host if request.client else "unknown"
         current_time = time.time()
         count, window_start = self.requests[client_id]
 
-        # Reset window if expired
         if current_time - window_start > 60:
             count = 0
             window_start = current_time
 
-        # Check rate limit
         if count >= self.requests_per_minute:
             logger.warning(f"Rate limit exceeded for {client_id}")
             raise HTTPException(
@@ -43,9 +50,7 @@ class RateLimiter(BaseHTTPMiddleware):
                 detail="Rate limit exceeded. Please try again later."
             )
 
-        # Increment counter
         self.requests[client_id] = (count + 1, window_start)
-
         response = await call_next(request)
         return response
 
