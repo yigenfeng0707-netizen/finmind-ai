@@ -111,8 +111,8 @@ async def landing():
         </div>
 
         <div class="stats">
-            <div class="stat-card"><div class="stat-number">4</div><div class="stat-label">AI Agents</div></div>
-            <div class="stat-card"><div class="stat-number">10+</div><div class="stat-label">Indicators</div></div>
+            <div class="stat-card"><div class="stat-number">5</div><div class="stat-label">AI Agents</div></div>
+            <div class="stat-card"><div class="stat-number">15+</div><div class="stat-label">Indicators</div></div>
             <div class="stat-card"><div class="stat-number">3s</div><div class="stat-label">Analysis Time</div></div>
             <div class="stat-card"><div class="stat-number">100%</div><div class="stat-label">Transparent</div></div>
         </div>
