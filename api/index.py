@@ -31,8 +31,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include backend routes
-app.include_router(backend_app.router)
+# Include backend routes directly
+from api.routes import router
+app.include_router(router)
 
 # Landing page
 @app.get("/", response_class=HTMLResponse)
