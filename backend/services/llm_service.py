@@ -3,27 +3,46 @@ import json
 import logging
 from typing import Optional
 
-from config import OPENAI_API_KEY, ANTHROPIC_API_KEY
+from config import OPENAI_API_KEY, ANTHROPIC_API_KEY, SENSENOVA_API_KEY, SENSENOVA_BASE_URL, SENSENOVA_MODEL
 
 logger = logging.getLogger(__name__)
 
 
 class LLMService:
-    """Unified LLM service supporting OpenAI and Anthropic APIs with graceful fallback."""
+    """Unified LLM service supporting OpenAI, Anthropic, and SenseNova APIs with graceful fallback."""
 
     def __init__(self):
         self.openai_client = None
         self.anthropic_client = None
+        self.sensenova_client = None
         self.provider: Optional[str] = None
         self.available: bool = False
+        self.default_model: Optional[str] = None
 
-        # Try OpenAI first
-        if OPENAI_API_KEY:
+        # Try SenseNova first (OpenAI-compatible, free/cheap for hackathon)
+        if SENSENOVA_API_KEY:
+            try:
+                from openai import AsyncOpenAI
+
+                self.sensenova_client = AsyncOpenAI(
+                    api_key=SENSENOVA_API_KEY,
+                    base_url=SENSENOVA_BASE_URL,
+                )
+                self.provider = "sensenova"
+                self.default_model = SENSENOVA_MODEL
+                self.available = True
+                logger.info("LLM provider initialized: SenseNova (%s)", SENSENOVA_MODEL)
+            except Exception as e:
+                logger.warning("Failed to initialize SenseNova client: %s", e)
+
+        # Try OpenAI
+        if not self.available and OPENAI_API_KEY:
             try:
                 from openai import AsyncOpenAI
 
                 self.openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
                 self.provider = "openai"
+                self.default_model = "gpt-4o-mini"
                 self.available = True
                 logger.info("LLM provider initialized: OpenAI")
             except Exception as e:
@@ -36,6 +55,7 @@ class LLMService:
 
                 self.anthropic_client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
                 self.provider = "anthropic"
+                self.default_model = "claude-sonnet-4-20250514"
                 self.available = True
                 logger.info("LLM provider initialized: Anthropic")
             except Exception as e:
@@ -43,7 +63,7 @@ class LLMService:
 
         if not self.available:
             logger.warning(
-                "No LLM provider available. Set OPENAI_API_KEY or ANTHROPIC_API_KEY."
+                "No LLM provider available. Set SENSENOVA_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY."
             )
 
     def is_available(self) -> bool:
@@ -92,7 +112,13 @@ class LLMService:
             return ""
 
         try:
-            if self.provider == "openai":
+            if self.provider == "sensenova":
+                return await self._retry_request(
+                    lambda: self._generate_sensenova(
+                        system_prompt, user_prompt, model, temperature, max_tokens
+                    )
+                )
+            elif self.provider == "openai":
                 return await self._retry_request(
                     lambda: self._generate_openai(
                         system_prompt, user_prompt, model, temperature, max_tokens
@@ -113,6 +139,29 @@ class LLMService:
             if fallback_result is not None:
                 return fallback_result
 
+        return ""
+
+    async def _generate_sensenova(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        model: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        """Generate using SenseNova (OpenAI-compatible API)."""
+        model = model or self.default_model or "sensenova-6.7-flash-lite"
+        response = await self.sensenova_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        if response.choices and len(response.choices) > 0 and response.choices[0].message:
+            return response.choices[0].message.content or ""
         return ""
 
     async def _generate_openai(
@@ -165,23 +214,37 @@ class LLMService:
         temperature: float,
         max_tokens: int,
     ) -> Optional[str]:
-        """Attempt generation with the fallback provider."""
-        if self.provider == "openai" and self.anthropic_client:
+        """Attempt generation with a fallback provider."""
+        # Try SenseNova first as fallback (cheapest)
+        if self.provider != "sensenova" and self.sensenova_client:
             try:
-                logger.info("Falling back to Anthropic provider.")
-                return await self._generate_anthropic(
+                logger.info("Falling back to SenseNova provider.")
+                return await self._generate_sensenova(
                     system_prompt, user_prompt, model, temperature, max_tokens
                 )
             except Exception as e:
-                logger.error("Anthropic fallback also failed: %s", e)
-        elif self.provider == "anthropic" and self.openai_client:
+                logger.error("SenseNova fallback failed: %s", e)
+
+        # Try OpenAI as fallback
+        if self.provider != "openai" and self.openai_client:
             try:
                 logger.info("Falling back to OpenAI provider.")
                 return await self._generate_openai(
                     system_prompt, user_prompt, model, temperature, max_tokens
                 )
             except Exception as e:
-                logger.error("OpenAI fallback also failed: %s", e)
+                logger.error("OpenAI fallback failed: %s", e)
+
+        # Try Anthropic as fallback
+        if self.provider != "anthropic" and self.anthropic_client:
+            try:
+                logger.info("Falling back to Anthropic provider.")
+                return await self._generate_anthropic(
+                    system_prompt, user_prompt, model, temperature, max_tokens
+                )
+            except Exception as e:
+                logger.error("Anthropic fallback failed: %s", e)
+
         return None
 
     async def generate_structured(

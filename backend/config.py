@@ -10,6 +10,9 @@ BACKEND_DIR = BASE_DIR / "backend"
 # API Keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+SENSENOVA_API_KEY = os.getenv("SENSENOVA_API_KEY", "")
+SENSENOVA_BASE_URL = os.getenv("SENSENOVA_BASE_URL", "https://token.sensenova.cn/v1")
+SENSENOVA_MODEL = os.getenv("SENSENOVA_MODEL", "sensenova-6.7-flash-lite")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
 
 # Database
@@ -37,7 +40,7 @@ API_ACCESS_KEY = os.getenv("API_ACCESS_KEY", "")  # Set this to protect your API
 API_ACCESS_ENABLED = os.getenv("API_ACCESS_ENABLED", "false").lower() == "true"
 
 # LLM Configuration
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai")  # openai or anthropic
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "sensenova")  # openai, anthropic, or sensenova
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "2000"))
