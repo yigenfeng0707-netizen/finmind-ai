@@ -158,6 +158,7 @@ function renderIndices(indices) {
     `).join('');
 }
 
+// ── Main Analysis Flow ──────────────────────────────────────────
 async function analyzeStock() {
     const symbol = searchInput.value.trim().toUpperCase();
 
@@ -166,39 +167,81 @@ async function analyzeStock() {
         return;
     }
 
-    // Show loading state
-    showLoading('quickAnalysis');
-    showLoading('detailedAnalysis');
-
     // Set all agents to running state
-    document.querySelectorAll('.agent-status-badge').forEach(badge => {
-        badge.textContent = 'Running...';
-        badge.className = 'agent-status-badge running';
-    });
+    setAllAgentStatus('running');
+    showLoading('quickAnalysis');
 
     try {
+        showNotification(`Analyzing ${symbol}...`, 'info');
+
         const response = await fetch(getApiUrl(`/analyze/${symbol}`));
         const data = await response.json();
 
         if (data.status === 'success') {
+            // Update agent statuses from results
+            updateAgentStatusesFromResults(data.agent_results || {});
+
+            // Render results on Dashboard
             renderQuickAnalysis(data);
+
+            // Render detailed analysis on Analysis page
             renderDetailedAnalysis(data);
-            showLoading('mainChart');
-            showLoading('backtestResults');
-            connectAnalysisWs(symbol);
+
+            // Switch to Analysis page to show charts & details
+            navigateTo('analysis');
+
+            // Load chart and backtest in parallel
             loadChart(symbol);
             loadBacktest(symbol);
 
-            // Add to watchlist if not exists
+            // Add to watchlist
             if (!watchlist.includes(symbol)) {
                 watchlist.push(symbol);
                 localStorage.setItem('watchlist', JSON.stringify(watchlist));
             }
+
+            showNotification(`${symbol} analysis complete!`, 'success');
         } else {
-            showError('quickAnalysis', data.error || 'Analysis failed');
+            setAllAgentStatus('error');
+            showError('quickAnalysis', data.error || data.detail || 'Analysis failed');
+            showNotification('Analysis failed: ' + (data.error || data.detail || 'Unknown error'), 'error');
         }
     } catch (error) {
-        showError('quickAnalysis', 'Failed to connect to API');
+        setAllAgentStatus('error');
+        showError('quickAnalysis', 'Failed to connect to API: ' + error.message);
+        showNotification('Connection error', 'error');
+    }
+}
+
+function setAllAgentStatus(status) {
+    document.querySelectorAll('.agent-status-badge').forEach(badge => {
+        if (status === 'running') {
+            badge.textContent = 'Running...';
+            badge.className = 'agent-status-badge running';
+        } else if (status === 'error') {
+            badge.textContent = 'Error';
+            badge.className = 'agent-status-badge error';
+        }
+    });
+}
+
+function updateAgentStatusesFromResults(agentResults) {
+    const agentMap = {
+        'news': 0,
+        'sentiment': 1,
+        'technical': 2,
+        'risk': 3,
+        'fundamental': 4
+    };
+
+    const badges = document.querySelectorAll('.agent-status-badge');
+
+    for (const [key, idx] of Object.entries(agentMap)) {
+        if (agentResults[key] && badges[idx]) {
+            const result = agentResults[key];
+            badges[idx].textContent = 'Done';
+            badges[idx].className = 'agent-status-badge active';
+        }
     }
 }
 
@@ -211,7 +254,7 @@ function renderQuickAnalysis(data) {
             <div class="recommendation-header">
                 <div>
                     <h2>${escapeHtml(data.company_name || data.symbol)}</h2>
-                    <p style="color: var(--text-secondary)">${escapeHtml(data.symbol)}</p>
+                    <p style="color: var(--text-secondary)">${escapeHtml(data.symbol)} · ${data.processing_time || 0}s</p>
                 </div>
                 <div class="recommendation-signal signal-${rec.signal || 'hold'}">
                     ${rec.signal ? rec.signal.replace('_', ' ').toUpperCase() : 'HOLD'}
@@ -239,17 +282,24 @@ function renderQuickAnalysis(data) {
                 </div>
             </div>
 
-            <div style="margin-top: 12px; text-align: right;">
-                <button onclick="window.open('/api/v1/export/${data.symbol}', '_blank')" 
-                    style="background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple)); 
-                           color: white; border: none; padding: 8px 16px; border-radius: 8px; 
-                           cursor: pointer; font-size: 13px;">
-                    📄 Export Report
-                </button>
-            </div>
-
             <div class="confidence-bar">
                 <div class="confidence-fill" style="width: ${(rec.confidence || 0.5) * 100}%"></div>
+            </div>
+
+            ${rec.reasoning ? `
+            <div style="margin-top: 16px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px; border-left: 3px solid var(--accent-blue);">
+                <p style="color: var(--text-secondary); line-height: 1.6; font-size: 13px;">
+                    ${escapeHtml(rec.reasoning).replace(/\n/g, '<br>')}
+                </p>
+            </div>` : ''}
+
+            <div style="margin-top: 12px; text-align: right;">
+                <button onclick="window.open('/api/v1/export/${data.symbol}', '_blank')"
+                    style="background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+                           color: white; border: none; padding: 8px 16px; border-radius: 8px;
+                           cursor: pointer; font-size: 13px;">
+                    Export Report
+                </button>
             </div>
         </div>
     `;
@@ -258,50 +308,47 @@ function renderQuickAnalysis(data) {
 function renderDetailedAnalysis(data) {
     const container = document.getElementById('detailedAnalysis');
     const agents = data.agent_results || {};
+    const rec = data.recommendation || {};
 
     let agentsHtml = '';
 
     // News Agent
     if (agents.news) {
         agentsHtml += createAgentResultCard(
-            '📰',
-            'News Monitor',
-            agents.news.signal,
-            agents.news.summary,
-            agents.news.key_findings
+            '📰', 'News Monitor', agents.news.signal,
+            agents.news.summary, agents.news.key_findings, agents.news.llm_enhanced
         );
     }
 
     // Sentiment Agent
     if (agents.sentiment) {
         agentsHtml += createAgentResultCard(
-            '💭',
-            'Sentiment Analysis',
-            agents.sentiment.signal,
-            agents.sentiment.analysis,
-            agents.sentiment.key_findings
+            '💭', 'Sentiment Analysis', agents.sentiment.signal,
+            agents.sentiment.analysis, agents.sentiment.key_findings, agents.sentiment.llm_enhanced
         );
     }
 
     // Technical Agent
     if (agents.technical) {
         agentsHtml += createAgentResultCard(
-            '📈',
-            'Technical Analysis',
-            agents.technical.signal,
-            agents.technical.summary,
-            agents.technical.key_findings
+            '📈', 'Technical Analysis', agents.technical.signal,
+            agents.technical.summary, agents.technical.key_findings, agents.technical.llm_enhanced
+        );
+    }
+
+    // Fundamental Agent
+    if (agents.fundamental) {
+        agentsHtml += createAgentResultCard(
+            '💰', 'Fundamental Analysis', agents.fundamental.signal,
+            agents.fundamental.summary, agents.fundamental.key_findings, agents.fundamental.llm_enhanced
         );
     }
 
     // Risk Agent
     if (agents.risk) {
         agentsHtml += createAgentResultCard(
-            '⚠️',
-            'Risk Assessment',
-            agents.risk.signal,
-            agents.risk.analysis,
-            agents.risk.risk_warnings
+            '⚠️', 'Risk Assessment', agents.risk.signal,
+            agents.risk.analysis, agents.risk.risk_warnings, agents.risk.llm_enhanced
         );
     }
 
@@ -310,14 +357,17 @@ function renderDetailedAnalysis(data) {
             <div class="recommendation-header">
                 <div>
                     <h2>${data.symbol} Analysis</h2>
-                    <p style="color: var(--text-secondary)">Processed in ${data.processing_time}s</p>
+                    <p style="color: var(--text-secondary)">Processed in ${data.processing_time}s · ${rec.llm_enhanced ? 'AI Enhanced' : 'Rule-based'}</p>
+                </div>
+                <div class="recommendation-signal signal-${rec.signal || 'hold'}">
+                    ${rec.signal ? rec.signal.replace('_', ' ').toUpperCase() : 'HOLD'}
                 </div>
             </div>
 
             <div class="recommendation-card" style="background: var(--bg-primary); margin-bottom: 20px;">
                 <h3 style="margin-bottom: 12px;">Final Recommendation</h3>
                 <p style="color: var(--text-secondary); line-height: 1.6;">
-                    ${(data.recommendation?.reasoning || 'Analysis completed.').replace(/\n/g, '<br>')}
+                    ${(rec.reasoning || 'Analysis completed.').replace(/\n/g, '<br>')}
                 </p>
             </div>
         </div>
@@ -329,7 +379,7 @@ function renderDetailedAnalysis(data) {
     `;
 }
 
-function createAgentResultCard(icon, title, signal, analysis, findings) {
+function createAgentResultCard(icon, title, signal, analysis, findings, llmEnhanced) {
     const signalClass = signal ? `signal-${signal}` : '';
     const safeAnalysis = analysis ? String(analysis) : 'Analysis pending...';
     const safeFindings = Array.isArray(findings)
@@ -337,8 +387,11 @@ function createAgentResultCard(icon, title, signal, analysis, findings) {
         : [];
     const findingsHtml = safeFindings.length
         ? `<ul style="margin-top: 12px; padding-left: 20px; color: var(--text-secondary);">
-            ${safeFindings.slice(0, 3).map(f => `<li style="margin-bottom: 4px;">${escapeHtml(f)}</li>`).join('')}
+            ${safeFindings.slice(0, 5).map(f => `<li style="margin-bottom: 4px;">${escapeHtml(f)}</li>`).join('')}
            </ul>`
+        : '';
+    const llmBadge = llmEnhanced
+        ? `<span style="font-size:10px;background:linear-gradient(90deg,var(--accent-blue),var(--accent-purple));color:white;padding:2px 6px;border-radius:4px;margin-left:8px;">AI Enhanced</span>`
         : '';
 
     return `
@@ -346,7 +399,7 @@ function createAgentResultCard(icon, title, signal, analysis, findings) {
             <div class="agent-result-header">
                 <div class="agent-result-title">
                     <span>${icon}</span>
-                    ${title}
+                    ${title}${llmBadge}
                 </div>
                 <span class="agent-signal ${signalClass}">
                     ${signal ? signal.replace('_', ' ') : 'N/A'}
@@ -380,7 +433,7 @@ async function loadNewsFeed() {
 function renderNewsFeed(articles) {
     const container = document.getElementById('newsFeed');
 
-    if (!articles.length) {
+    if (!articles || !articles.length) {
         container.innerHTML = '<p class="analysis-placeholder">No news articles found</p>';
         return;
     }
@@ -389,13 +442,13 @@ function renderNewsFeed(articles) {
         <div class="news-card">
             <div class="news-header">
                 <div class="news-title">${escapeHtml(article.title)}</div>
-                <span class="news-sentiment sentiment-${article.sentiment}">
-                    ${article.sentiment}
+                <span class="news-sentiment sentiment-${article.sentiment || 'neutral'}">
+                    ${article.sentiment || 'neutral'}
                 </span>
             </div>
             <div class="news-description">${escapeHtml(article.description || '')}</div>
             <div class="news-meta">
-                <span>${article.source}</span>
+                <span>${escapeHtml(article.source || '')}</span>
                 <span>${formatTime(article.published_at)}</span>
             </div>
         </div>
@@ -422,131 +475,28 @@ function loadWatchlist() {
     `;
 }
 
-// WebSocket Analysis Progress
-let analysisWs = null;
-
-function connectAnalysisWs(symbol) {
-    // Close existing connection
-    if (analysisWs) {
-        analysisWs.close();
-        analysisWs = null;
-    }
-
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/analysis/${symbol}`;
-
-    try {
-        analysisWs = new WebSocket(wsUrl);
-
-        analysisWs.onopen = () => {
-            console.log(`WebSocket connected for ${symbol}`);
-        };
-
-        analysisWs.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                handleWsMessage(data);
-            } catch (e) {
-                console.error('WebSocket message parse error:', e);
-            }
-        };
-
-        analysisWs.onerror = (error) => {
-            console.log('WebSocket error (non-critical, progress updates disabled)');
-        };
-
-        analysisWs.onclose = () => {
-            analysisWs = null;
-        };
-    } catch (e) {
-        console.log('WebSocket not available, progress updates disabled');
-    }
-}
-
-function handleWsMessage(data) {
-    if (data.type === 'agent_progress') {
-        updateAgentProgress(data.agent, data.status, data.result);
-    } else if (data.type === 'analysis_complete') {
-        updateAnalysisComplete(data.result);
-    }
-}
-
-function updateAgentProgress(agentName, status, result) {
-    // Update agent status cards on dashboard
-    const agentCards = document.querySelectorAll('.agent-card');
-    const agentMap = {
-        'News Monitor': 0,
-        'Sentiment Analysis': 1,
-        'Technical Analysis': 2,
-        'Risk Assessment': 3,
-        'Fundamental Analysis': 4
-    };
-    
-    const idx = agentMap[agentName];
-    if (idx !== undefined && agentCards[idx]) {
-        const card = agentCards[idx];
-        const statusBadge = card.querySelector('.agent-status-badge');
-        if (statusBadge) {
-            if (status === 'completed') {
-                statusBadge.textContent = 'Done';
-                statusBadge.className = 'agent-status-badge active';
-                card.classList.add('pulse-once');
-                setTimeout(() => card.classList.remove('pulse-once'), 1000);
-            } else if (status === 'running') {
-                statusBadge.textContent = 'Running...';
-                statusBadge.className = 'agent-status-badge running';
-            }
-        }
-    }
-    
-    // Update analysis page agent cards
-    const agentResultCards = document.querySelectorAll('.agent-result-card');
-    agentResultCards.forEach(card => {
-        const titleEl = card.querySelector('.agent-result-title');
-        if (titleEl && titleEl.textContent.includes(agentName)) {
-            const signalEl = card.querySelector('.agent-signal');
-            if (signalEl && status === 'completed' && result) {
-                const signal = result.signal || 'hold';
-                signalEl.textContent = signal.replace('_', ' ');
-                signalEl.className = `agent-signal signal-${signal}`;
-                
-                // Add LLM badge if enhanced
-                if (result.llm_enhanced) {
-                    const badge = document.createElement('span');
-                    badge.className = 'llm-badge';
-                    badge.textContent = 'AI Enhanced';
-                    badge.style.cssText = 'font-size:10px;background:linear-gradient(90deg,var(--accent-blue),var(--accent-purple));color:white;padding:2px 6px;border-radius:4px;margin-left:8px;';
-                    titleEl.appendChild(badge);
-                }
-            }
-        }
-    });
-    
-    // Show progress notification
-    if (status === 'completed') {
-        showNotification(`${agentName} completed`, 'success');
-    }
-}
-
-function updateAnalysisComplete(result) {
-    showNotification('Analysis complete!', 'success');
-}
-
 // Chart Management
 let mainChartInstance = null;
 let rsiChartInstance = null;
-let chartSeries = {};
 
 async function loadChart(symbol) {
+    const container = document.getElementById('mainChart');
+    if (!container) return;
+
+    container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
     try {
         const response = await fetch(getApiUrl('/chart-data/' + symbol + '?period=6mo'));
         const data = await response.json();
 
-        if (data.status === 'success' && data.candles) {
+        if (data.status === 'success' && data.candles && data.candles.length > 0) {
             renderChart(data);
+        } else {
+            container.innerHTML = '<p class="analysis-placeholder">Chart data unavailable</p>';
         }
     } catch (error) {
         console.error('Failed to load chart data:', error);
+        container.innerHTML = '<p class="analysis-placeholder">Failed to load chart</p>';
     }
 }
 
@@ -570,16 +520,9 @@ function renderChart(data) {
             vertLines: { color: 'rgba(255,255,255,0.05)' },
             horzLines: { color: 'rgba(255,255,255,0.05)' },
         },
-        crosshair: {
-            mode: 0,
-        },
-        rightPriceScale: {
-            borderColor: 'rgba(255,255,255,0.1)',
-        },
-        timeScale: {
-            borderColor: 'rgba(255,255,255,0.1)',
-            timeVisible: true,
-        },
+        crosshair: { mode: 0 },
+        rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' },
+        timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true },
     };
 
     // Main chart
@@ -610,107 +553,68 @@ function renderChart(data) {
     volumeSeries.priceScale().applyOptions({
         scaleMargins: { top: 0.8, bottom: 0 },
     });
-    if (data.volume) {
-        volumeSeries.setData(data.volume);
-    }
+    if (data.volume) volumeSeries.setData(data.volume);
 
     // SMA 20
-    if (data.sma20) {
-        const sma20Series = mainChartInstance.addLineSeries({
-            color: '#ffd93d',
-            lineWidth: 1,
-            priceLineVisible: false,
-            lastValueVisible: false,
-        });
-        sma20Series.setData(data.sma20);
+    if (data.sma20 && data.sma20.length) {
+        mainChartInstance.addLineSeries({
+            color: '#ffd93d', lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
+        }).setData(data.sma20);
     }
 
     // SMA 50
-    if (data.sma50) {
-        const sma50Series = mainChartInstance.addLineSeries({
-            color: '#7b2cbf',
-            lineWidth: 1,
-            priceLineVisible: false,
-            lastValueVisible: false,
-        });
-        sma50Series.setData(data.sma50);
+    if (data.sma50 && data.sma50.length) {
+        mainChartInstance.addLineSeries({
+            color: '#7b2cbf', lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
+        }).setData(data.sma50);
     }
 
     // Bollinger Bands
     if (data.bb_upper && data.bb_lower) {
-        const bbUpperSeries = mainChartInstance.addLineSeries({
-            color: 'rgba(0, 212, 255, 0.3)',
-            lineWidth: 1,
-            lineStyle: 2,
-            priceLineVisible: false,
-            lastValueVisible: false,
-        });
-        bbUpperSeries.setData(data.bb_upper);
-
-        const bbLowerSeries = mainChartInstance.addLineSeries({
-            color: 'rgba(0, 212, 255, 0.3)',
-            lineWidth: 1,
-            lineStyle: 2,
-            priceLineVisible: false,
-            lastValueVisible: false,
-        });
-        bbLowerSeries.setData(data.bb_lower);
+        mainChartInstance.addLineSeries({
+            color: 'rgba(0, 212, 255, 0.3)', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+        }).setData(data.bb_upper);
+        mainChartInstance.addLineSeries({
+            color: 'rgba(0, 212, 255, 0.3)', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+        }).setData(data.bb_lower);
     }
 
     // RSI chart
     const rsiContainer = document.getElementById('rsiChart');
-    rsiChartInstance = LightweightCharts.createChart(rsiContainer, {
-        ...chartOptions,
-        width: rsiContainer.clientWidth,
-        height: 150,
-    });
-
-    if (data.rsi) {
-        const rsiSeries = rsiChartInstance.addLineSeries({
-            color: '#00d4ff',
-            lineWidth: 2,
-            priceLineVisible: false,
+    if (rsiContainer && data.rsi && data.rsi.length) {
+        rsiChartInstance = LightweightCharts.createChart(rsiContainer, {
+            ...chartOptions,
+            width: rsiContainer.clientWidth,
+            height: 150,
         });
-        rsiSeries.setData(data.rsi);
 
-        // RSI reference lines at 30 and 70
-        const rsi30 = rsiChartInstance.addLineSeries({
-            color: 'rgba(0, 255, 136, 0.3)',
-            lineWidth: 1,
-            lineStyle: 2,
-            priceLineVisible: false,
-            lastValueVisible: false,
-        });
-        rsi30.setData(data.rsi.map(d => ({ time: d.time, value: 30 })));
+        rsiChartInstance.addLineSeries({
+            color: '#00d4ff', lineWidth: 2, priceLineVisible: false,
+        }).setData(data.rsi);
 
-        const rsi70 = rsiChartInstance.addLineSeries({
-            color: 'rgba(255, 71, 87, 0.3)',
-            lineWidth: 1,
-            lineStyle: 2,
-            priceLineVisible: false,
-            lastValueVisible: false,
+        // RSI reference lines
+        rsiChartInstance.addLineSeries({
+            color: 'rgba(0, 255, 136, 0.3)', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+        }).setData(data.rsi.map(d => ({ time: d.time, value: 30 })));
+        rsiChartInstance.addLineSeries({
+            color: 'rgba(255, 71, 87, 0.3)', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+        }).setData(data.rsi.map(d => ({ time: d.time, value: 70 })));
+
+        // Sync time scales
+        mainChartInstance.timeScale().subscribeVisibleLogicalRangeChange(range => {
+            if (range) rsiChartInstance.timeScale().setVisibleLogicalRange(range);
         });
-        rsi70.setData(data.rsi.map(d => ({ time: d.time, value: 70 })));
+        rsiChartInstance.timeScale().subscribeVisibleLogicalRangeChange(range => {
+            if (range) mainChartInstance.timeScale().setVisibleLogicalRange(range);
+        });
     }
-
-    // Sync time scales
-    mainChartInstance.timeScale().subscribeVisibleLogicalRangeChange(range => {
-        if (range) {
-            rsiChartInstance.timeScale().setVisibleLogicalRange(range);
-        }
-    });
-    rsiChartInstance.timeScale().subscribeVisibleLogicalRangeChange(range => {
-        if (range) {
-            mainChartInstance.timeScale().setVisibleLogicalRange(range);
-        }
-    });
 
     // Handle resize
     const resizeObserver = new ResizeObserver(entries => {
         for (const entry of entries) {
             const { width } = entry.contentRect;
-            mainChartInstance.applyOptions({ width });
-            rsiChartInstance.applyOptions({ width });
+            if (mainChartInstance) mainChartInstance.applyOptions({ width });
+            if (rsiChartInstance) rsiChartInstance.applyOptions({ width });
         }
     });
     resizeObserver.observe(mainContainer);
@@ -718,29 +622,37 @@ function renderChart(data) {
 
 // Backtest
 async function loadBacktest(symbol) {
+    const container = document.getElementById('backtestResults');
+    if (!container) return;
+
+    container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
     try {
         const response = await fetch(getApiUrl('/backtest/' + symbol));
         const data = await response.json();
 
-        if (data.status === 'success') {
+        if (data.status === 'success' && data.metrics) {
             renderBacktestResults(data);
+        } else {
+            container.innerHTML = '<p class="analysis-placeholder">Backtest data unavailable</p>';
         }
     } catch (error) {
         console.error('Failed to load backtest data:', error);
+        container.innerHTML = '<p class="analysis-placeholder">Failed to load backtest</p>';
     }
 }
 
 function renderBacktestResults(data) {
     const container = document.getElementById('backtestResults');
     if (!container) return;
-    
+
     const m = data.metrics;
     const returnClass = m.total_return_pct >= 0 ? 'positive' : 'negative';
     const returnColor = m.total_return_pct >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
-    
+
     container.innerHTML = `
         <div class="backtest-card">
-            <h3>Strategy Backtest Results (${data.period})</h3>
+            <h3>Strategy Backtest Results (${data.period || '1y'}, ${data.strategy || 'combined'})</h3>
             <div class="metrics-grid">
                 <div class="metric-card">
                     <div class="metric-value ${returnClass}" style="color: ${returnColor}">
@@ -772,7 +684,7 @@ function renderBacktestResults(data) {
             <div id="equityCurveChart" class="chart-main" style="height: 200px; margin-top: 20px;"></div>
         </div>
     `;
-    
+
     // Render equity curve if data available
     if (data.equity_curve && data.equity_curve.length > 0 && typeof LightweightCharts !== 'undefined') {
         renderEquityCurve(data.equity_curve);
@@ -782,7 +694,7 @@ function renderBacktestResults(data) {
 function renderEquityCurve(equityData) {
     const container = document.getElementById('equityCurveChart');
     if (!container) return;
-    
+
     const chart = LightweightCharts.createChart(container, {
         layout: {
             background: { type: 'solid', color: '#1a1a3a' },
@@ -792,31 +704,21 @@ function renderEquityCurve(equityData) {
             vertLines: { color: 'rgba(255,255,255,0.05)' },
             horzLines: { color: 'rgba(255,255,255,0.05)' },
         },
-        rightPriceScale: {
-            borderColor: 'rgba(255,255,255,0.1)',
-        },
-        timeScale: {
-            borderColor: 'rgba(255,255,255,0.1)',
-        },
+        rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' },
+        timeScale: { borderColor: 'rgba(255,255,255,0.1)' },
         width: container.clientWidth,
         height: 200,
     });
-    
+
     const series = chart.addLineSeries({
-        color: '#00ff88',
-        lineWidth: 2,
-        priceLineVisible: false,
+        color: '#00ff88', lineWidth: 2, priceLineVisible: false,
     });
-    
-    // Convert equity data to chart format
+
     const chartData = equityData.map(d => {
         const date = new Date(d.date);
-        return {
-            time: Math.floor(date.getTime() / 1000),
-            value: d.equity
-        };
+        return { time: Math.floor(date.getTime() / 1000), value: d.equity };
     }).filter(d => d.time > 0);
-    
+
     series.setData(chartData);
 }
 
@@ -848,7 +750,7 @@ function showLoading(elementId) {
 function showError(elementId, message) {
     const el = document.getElementById(elementId);
     if (el) {
-        el.innerHTML = `<div class="analysis-placeholder" style="color: var(--accent-red);">${message}</div>`;
+        el.innerHTML = `<div class="analysis-placeholder" style="color: var(--accent-red);">${escapeHtml(message)}</div>`;
     }
 }
 
@@ -856,11 +758,13 @@ function showNotification(message, type = 'info') {
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
     toast.textContent = message;
-    document.getElementById('toastContainer').appendChild(toast);
-    
-    setTimeout(() => toast.classList.add('show'), 10);
-    setTimeout(() => {
-        toast.classList.remove('show');
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    const container = document.getElementById('toastContainer');
+    if (container) {
+        container.appendChild(toast);
+        setTimeout(() => toast.classList.add('show'), 10);
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    }
 }
