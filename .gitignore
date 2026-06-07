@@ -1,0 +1,105 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment Variables
+.env
+.env.local
+.env.production
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Node
+node_modules/
+package-lock.json
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+
+# Upload scripts (temporary)
+upload_*.ps1
+upload_*.py
+concat_videos.py
+create_*.py
+create_*.ps1
+
+# Video/audio assets (too large for git)
+video_output/
+video_assets/
+voiceover/
+douyin_wechat_videos/
+youtube_bilibili/
+youtube_bilibili_final/
+youtube_bilibili_rich/
+thumbnails/
+ucws_thumbnails/
+
+# Large media files
+*.mp4
+*.mp3
+*.wav
+*.avi
+*.mov
+
+# Chinese-named files (submission artifacts)
+*.pdf
+*.pptx
+*.jpg
+
+.vercel

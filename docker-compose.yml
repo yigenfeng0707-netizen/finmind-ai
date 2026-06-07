@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  finmind-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - NEWSAPI_KEY=${NEWSAPI_KEY}
+      - DEBUG=false
+    volumes:
+      - ./frontend:/app/frontend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Optional: Redis for caching
+  # redis:
+  #   image: redis:alpine
+  #   ports:
+  #     - "6379:6379"
