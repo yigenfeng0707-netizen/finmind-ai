@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinMind AI Dashboard</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+    <div id="toastContainer" class="toast-container"></div>
+    <div class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <span class="logo-icon">FM</span>
+                <span class="logo-text">FinMind AI</span>
+            </div>
+            <nav class="nav">
+                <a href="#" class="nav-item active" data-page="dashboard">
+                    <span class="nav-icon">📊</span>
+                    Dashboard
+                </a>
+                <a href="#" class="nav-item" data-page="analysis">
+                    <span class="nav-icon">🔍</span>
+                    Analysis
+                </a>
+                <a href="#" class="nav-item" data-page="news">
+                    <span class="nav-icon">📰</span>
+                    News Feed
+                </a>
+                <a href="#" class="nav-item" data-page="watchlist">
+                    <span class="nav-icon">👁️</span>
+                    Watchlist
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="agent-status">
+                    <span class="status-dot active"></span>
+                    5 Agents Active
+                </div>
+                <div class="api-key-section" style="margin-top: 16px; padding: 12px; background: rgba(255,255,255,0.05); border-radius: 8px;">
+                    <label style="font-size: 11px; color: var(--text-secondary); display: block; margin-bottom: 6px;">API Access Key</label>
+                    <input type="password" id="apiKeyInput" placeholder="Enter key if required" 
+                           style="width: 100%; padding: 6px 8px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 12px;"
+                           onchange="setApiKey(this.value)">
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main">
+            <!-- Header -->
+            <header class="header">
+                <div class="search-bar">
+                    <input type="text" id="searchInput" placeholder="Enter stock symbol (e.g., AAPL, TSLA)">
+                    <button id="analyzeBtn" class="btn-primary">Analyze</button>
+                </div>
+                <div class="header-actions">
+                    <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()">🌙</button>
+                    <span class="timestamp" id="timestamp"></span>
+                </div>
+            </header>
+
+            <!-- Dashboard Page -->
+            <div id="dashboard" class="page active">
+                <!-- Hero Section -->
+                <section class="hero-section animate-fadeIn">
+                    <div class="hero-content">
+                        <h1 class="hero-title">
+                            <span class="text-gradient">FinMind AI</span>
+                        </h1>
+                        <p class="hero-subtitle">Autonomous Multi-Agent Financial Analysis System</p>
+                        <div class="hero-stats">
+                            <div class="hero-stat">
+                                <span class="hero-stat-value">4</span>
+                                <span class="hero-stat-label">AI Agents</span>
+                            </div>
+                            <div class="hero-stat">
+                                <span class="hero-stat-value">10+</span>
+                                <span class="hero-stat-label">Indicators</span>
+                            </div>
+                            <div class="hero-stat">
+                                <span class="hero-stat-value">Real-time</span>
+                                <span class="hero-stat-label">Analysis</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Market Overview -->
+                <section class="section animate-fadeIn" style="animation-delay: 0.2s;">
+                    <h2 class="section-title">
+                        <span class="section-icon">📊</span>
+                        Market Overview
+                    </h2>
+                    <div class="indices-grid" id="indicesGrid">
+                        <!-- Indices will be loaded here -->
+                    </div>
+                </section>
+
+                <!-- Quick Analysis -->
+                <section class="section animate-fadeIn" style="animation-delay: 0.3s;">
+                    <h2 class="section-title">
+                        <span class="section-icon">🔍</span>
+                        Quick Analysis
+                    </h2>
+                    <div class="analysis-placeholder glow-hover" id="quickAnalysis">
+                        <div class="placeholder-icon">📈</div>
+                        <p>Enter a stock symbol above to start analysis</p>
+                        <p class="placeholder-hint">Try: AAPL, TSLA, GOOGL, NVDA, MSFT</p>
+                    </div>
+                </section>
+
+                <!-- Agent Status -->
+                <section class="section animate-fadeIn" style="animation-delay: 0.4s;">
+                    <h2 class="section-title">
+                        <span class="section-icon">🤖</span>
+                        AI Agent Status
+                    </h2>
+                    <div class="agents-grid" id="agentsGrid">
+                        <div class="agent-card active">
+                            <div class="agent-icon">📰</div>
+                            <div class="agent-info">
+                                <h3>News Monitor</h3>
+                                <p>Real-time financial news scanning</p>
+                            </div>
+                            <span class="agent-status-badge active">Active</span>
+                        </div>
+                        <div class="agent-card active">
+                            <div class="agent-icon">💭</div>
+                            <div class="agent-info">
+                                <h3>Sentiment Analysis</h3>
+                                <p>Market情绪分析</p>
+                            </div>
+                            <span class="agent-status-badge active">Active</span>
+                        </div>
+                        <div class="agent-card active">
+                            <div class="agent-icon">📈</div>
+                            <div class="agent-info">
+                                <h3>Technical Analysis</h3>
+                                <p>RSI, MACD, Bollinger计算</p>
+                            </div>
+                            <span class="agent-status-badge active">Active</span>
+                        </div>
+                        <div class="agent-card active">
+                            <div class="agent-icon">⚠️</div>
+                            <div class="agent-info">
+                                <h3>Risk Assessment</h3>
+                                <p>Multi-dimensional风险量化</p>
+                            </div>
+                            <span class="agent-status-badge active">Active</span>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Features Section -->
+                <section class="section animate-fadeIn" style="animation-delay: 0.5s;">
+                    <h2 class="section-title">
+                        <span class="section-icon">✨</span>
+                        Why FinMind AI?
+                    </h2>
+                    <div class="features-grid">
+                        <div class="feature-card glow-hover">
+                            <div class="feature-icon">🔗</div>
+                            <h3>Multi-Agent Collaboration</h3>
+                            <p>4 specialized agents work together like a professional team</p>
+                        </div>
+                        <div class="feature-card glow-hover">
+                            <div class="feature-icon">👁️</div>
+                            <h3>Transparent Reasoning</h3>
+                            <p>Every recommendation includes clear, explainable reasoning</p>
+                        </div>
+                        <div class="feature-card glow-hover">
+                            <div class="feature-icon">⚠️</div>
+                            <h3>Risk-First Design</h3>
+                            <p>Not just buy recommendations - we emphasize risk warnings</p>
+                        </div>
+                        <div class="feature-card glow-hover">
+                            <div class="feature-icon">⚡</div>
+                            <h3>Real-Time Analysis</h3>
+                            <p>Live market data with millisecond response times</p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Analysis Page -->
+            <div id="analysis" class="page">
+                <section class="section">
+                    <h2 class="section-title">
+                        <span class="section-icon">📊</span>
+                        Price Chart & Indicators
+                    </h2>
+                    <div class="chart-container">
+                        <div id="mainChart" class="chart-main"></div>
+                        <div id="rsiChart" class="chart-rsi"></div>
+                    </div>
+                </section>
+                <section class="section">
+                    <h2 class="section-title">
+                        <span class="section-icon">📊</span>
+                        Backtest Results
+                    </h2>
+                    <div id="backtestResults">
+                        <div class="analysis-placeholder">
+                            <p>Run analysis to see backtest results</p>
+                        </div>
+                    </div>
+                </section>
+                <section class="section">
+                    <h2 class="section-title">Detailed Analysis</h2>
+                    <div class="analysis-container" id="detailedAnalysis">
+                        <div class="analysis-placeholder">
+                            <p>Select a stock to view detailed analysis</p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- News Page -->
+            <div id="news" class="page">
+                <section class="section">
+                    <h2 class="section-title">Market News</h2>
+                    <div class="news-feed" id="newsFeed">
+                        <div class="analysis-placeholder">
+                            <p>Loading market news...</p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Watchlist Page -->
+            <div id="watchlist" class="page">
+                <section class="section">
+                    <h2 class="section-title">Your Watchlist</h2>
+                    <div class="watchlist-container" id="watchlistContainer">
+                        <div class="analysis-placeholder">
+                            <p>Add stocks to your watchlist to track them</p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
