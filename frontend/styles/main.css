@@ -451,6 +451,39 @@ body {
     color: var(--accent-green);
 }
 
+.agent-status-badge.running {
+    background: rgba(0, 212, 255, 0.2);
+    color: var(--accent-blue);
+    animation: pulse 1.5s infinite;
+}
+
+.agent-status-badge.error {
+    background: rgba(255, 71, 87, 0.2);
+    color: var(--accent-red);
+}
+
+.agent-status-badge.done {
+    background: rgba(0, 255, 136, 0.2);
+    color: var(--accent-green);
+}
+
+.agent-status-badge.signal-buy,
+.agent-status-badge.signal-strong-buy {
+    background: rgba(0, 255, 136, 0.2);
+    color: var(--accent-green);
+}
+
+.agent-status-badge.signal-hold {
+    background: rgba(255, 217, 61, 0.2);
+    color: var(--accent-yellow);
+}
+
+.agent-status-badge.signal-sell,
+.agent-status-badge.signal-strong-sell {
+    background: rgba(255, 71, 87, 0.2);
+    color: var(--accent-red);
+}
+
 /* Analysis Container */
 .analysis-container {
     background: var(--bg-card);

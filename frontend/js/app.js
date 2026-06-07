@@ -1,6 +1,7 @@
 // FinMind AI Frontend Application
 
 const API_BASE = '/api/v1';
+const ANALYSIS_TIMEOUT = 90000; // 90s timeout for analysis
 
 // API Key management
 function getApiKey() {
@@ -26,27 +27,30 @@ function getApiUrl(endpoint) {
 
 // Utility: Escape HTML to prevent XSS
 function escapeHtml(text) {
-    if (!text) return '';
+    if (text == null) return '';
     const div = document.createElement('div');
-    div.textContent = text;
+    div.textContent = String(text);
     return div.innerHTML;
 }
 
 // State
 let currentPage = 'dashboard';
 let watchlist = JSON.parse(localStorage.getItem('watchlist') || '[]');
+let currentAnalysisSymbol = null;
 
 // DOM Elements
-const searchInput = document.getElementById('searchInput');
-const analyzeBtn = document.getElementById('analyzeBtn');
-const timestampEl = document.getElementById('timestamp');
+let searchInput, analyzeBtn, timestampEl;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
-    initializeApp();
+    searchInput = document.getElementById('searchInput');
+    analyzeBtn = document.getElementById('analyzeBtn');
+    timestampEl = document.getElementById('timestamp');
+
     setupEventListeners();
     updateTimestamp();
     setInterval(updateTimestamp, 60000);
+    initializeApp();
 });
 
 function initializeApp() {
@@ -70,8 +74,8 @@ function setupEventListeners() {
     });
 
     // Analysis
-    analyzeBtn.addEventListener('click', () => analyzeStock());
-    searchInput.addEventListener('keypress', (e) => {
+    if (analyzeBtn) analyzeBtn.addEventListener('click', () => analyzeStock());
+    if (searchInput) searchInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') analyzeStock();
     });
 }
@@ -95,13 +99,11 @@ function navigateTo(page) {
 }
 
 function updateTimestamp() {
+    if (!timestampEl) return;
     const now = new Date();
     timestampEl.textContent = now.toLocaleString('en-US', {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
+        weekday: 'short', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit'
     });
 }
 
@@ -112,7 +114,8 @@ function toggleTheme() {
     const next = current === 'light' ? 'dark' : 'light';
     html.setAttribute('data-theme', next);
     localStorage.setItem('theme', next);
-    document.getElementById('themeToggle').textContent = next === 'light' ? '☀️' : '🌙';
+    const btn = document.getElementById('themeToggle');
+    if (btn) btn.textContent = next === 'light' ? '☀️' : '🌙';
 }
 
 // Load saved theme
@@ -125,22 +128,41 @@ function toggleTheme() {
     }
 })();
 
-// API Calls
+// ── Fetch with timeout ──────────────────────────────────────────
+async function fetchWithTimeout(url, options = {}, timeout = 30000) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        clearTimeout(id);
+        return response;
+    } catch (error) {
+        clearTimeout(id);
+        if (error.name === 'AbortError') {
+            throw new Error('Request timed out');
+        }
+        throw error;
+    }
+}
+
+// ── Market Overview ──────────────────────────────────────────────
 async function loadMarketOverview() {
     try {
-        const response = await fetch(getApiUrl('/market-overview'));
+        const response = await fetchWithTimeout(getApiUrl('/market-overview'), {}, 15000);
         const data = await response.json();
-
         if (data.status === 'success') {
             renderIndices(data.indices || []);
         }
     } catch (error) {
-        console.error('Failed to load market overview:', error);
+        console.warn('Market overview unavailable:', error.message);
+        const grid = document.getElementById('indicesGrid');
+        if (grid) grid.innerHTML = '<p class="analysis-placeholder">Market data temporarily unavailable</p>';
     }
 }
 
 function renderIndices(indices) {
     const grid = document.getElementById('indicesGrid');
+    if (!grid) return;
 
     if (!indices.length) {
         grid.innerHTML = '<p class="analysis-placeholder">Loading market data...</p>';
@@ -152,7 +174,7 @@ function renderIndices(indices) {
             <div class="index-name">${escapeHtml(index.name)}</div>
             <div class="index-price">$${formatNumber(index.current_price)}</div>
             <div class="index-change ${index.change_percent >= 0 ? 'positive' : 'negative'}">
-                ${index.change_percent >= 0 ? '+' : ''}${index.change_percent.toFixed(2)}%
+                ${index.change_percent >= 0 ? '+' : ''}${(index.change_percent || 0).toFixed(2)}%
             </div>
         </div>
     `).join('');
@@ -160,22 +182,35 @@ function renderIndices(indices) {
 
 // ── Main Analysis Flow ──────────────────────────────────────────
 async function analyzeStock() {
-    const symbol = searchInput.value.trim().toUpperCase();
-
+    const symbol = searchInput ? searchInput.value.trim().toUpperCase() : '';
     if (!symbol) {
         showNotification('Please enter a stock symbol', 'error');
         return;
     }
 
+    currentAnalysisSymbol = symbol;
+
+    // Disable button during analysis
+    if (analyzeBtn) {
+        analyzeBtn.disabled = true;
+        analyzeBtn.textContent = 'Analyzing...';
+    }
+
     // Set all agents to running state
     setAllAgentStatus('running');
     showLoading('quickAnalysis');
+    showLoading('detailedAnalysis');
+    showLoading('backtestResults');
+    showLoading('mainChart');
 
     try {
         showNotification(`Analyzing ${symbol}...`, 'info');
 
-        const response = await fetch(getApiUrl(`/analyze/${symbol}`));
+        const response = await fetchWithTimeout(getApiUrl(`/analyze/${symbol}`), {}, ANALYSIS_TIMEOUT);
         const data = await response.json();
+
+        // Check if user navigated away or started a new analysis
+        if (currentAnalysisSymbol !== symbol) return;
 
         if (data.status === 'success') {
             // Update agent statuses from results
@@ -204,12 +239,25 @@ async function analyzeStock() {
         } else {
             setAllAgentStatus('error');
             showError('quickAnalysis', data.error || data.detail || 'Analysis failed');
+            showError('detailedAnalysis', data.error || data.detail || 'Analysis failed');
+            showError('backtestResults', 'Analysis failed - no backtest data');
+            clearLoading('mainChart');
             showNotification('Analysis failed: ' + (data.error || data.detail || 'Unknown error'), 'error');
         }
     } catch (error) {
+        if (currentAnalysisSymbol !== symbol) return;
         setAllAgentStatus('error');
-        showError('quickAnalysis', 'Failed to connect to API: ' + error.message);
-        showNotification('Connection error', 'error');
+        const msg = error.message || 'Connection error';
+        showError('quickAnalysis', msg);
+        showError('detailedAnalysis', msg);
+        showError('backtestResults', 'Connection error');
+        clearLoading('mainChart');
+        showNotification('Error: ' + msg, 'error');
+    } finally {
+        if (analyzeBtn) {
+            analyzeBtn.disabled = false;
+            analyzeBtn.textContent = 'Analyze';
+        }
     }
 }
 
@@ -221,6 +269,9 @@ function setAllAgentStatus(status) {
         } else if (status === 'error') {
             badge.textContent = 'Error';
             badge.className = 'agent-status-badge error';
+        } else if (status === 'active') {
+            badge.textContent = 'Active';
+            badge.className = 'agent-status-badge active';
         }
     });
 }
@@ -239,14 +290,17 @@ function updateAgentStatusesFromResults(agentResults) {
     for (const [key, idx] of Object.entries(agentMap)) {
         if (agentResults[key] && badges[idx]) {
             const result = agentResults[key];
-            badges[idx].textContent = 'Done';
-            badges[idx].className = 'agent-status-badge active';
+            const signal = result.signal || 'hold';
+            badges[idx].textContent = signal.replace('_', ' ').toUpperCase();
+            badges[idx].className = 'agent-status-badge done signal-' + signal;
         }
     }
 }
 
 function renderQuickAnalysis(data) {
     const container = document.getElementById('quickAnalysis');
+    if (!container) return;
+
     const rec = data.recommendation || {};
 
     container.innerHTML = `
@@ -267,8 +321,9 @@ function renderQuickAnalysis(data) {
                     <div class="metric-label">Current Price</div>
                 </div>
                 <div class="metric-card">
-                    <div class="metric-value ${data.change_percent >= 0 ? 'positive' : 'negative'}" style="color: ${data.change_percent >= 0 ? 'var(--accent-green)' : 'var(--accent-red)'}">
-                        ${data.change_percent >= 0 ? '+' : ''}${data.change_percent || 0}%
+                    <div class="metric-value ${(data.change_percent || 0) >= 0 ? 'positive' : 'negative'}"
+                         style="color: ${(data.change_percent || 0) >= 0 ? 'var(--accent-green)' : 'var(--accent-red)'}">
+                        ${(data.change_percent || 0) >= 0 ? '+' : ''}${(data.change_percent || 0).toFixed(2)}%
                     </div>
                     <div class="metric-label">Change</div>
                 </div>
@@ -293,7 +348,7 @@ function renderQuickAnalysis(data) {
                 </p>
             </div>` : ''}
 
-            <div style="margin-top: 12px; text-align: right;">
+            <div style="margin-top: 12px; display: flex; gap: 8px; justify-content: flex-end;">
                 <button onclick="window.open('/api/v1/export/${data.symbol}', '_blank')"
                     style="background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
                            color: white; border: none; padding: 8px 16px; border-radius: 8px;
@@ -307,6 +362,8 @@ function renderQuickAnalysis(data) {
 
 function renderDetailedAnalysis(data) {
     const container = document.getElementById('detailedAnalysis');
+    if (!container) return;
+
     const agents = data.agent_results || {};
     const rec = data.recommendation || {};
 
@@ -356,8 +413,8 @@ function renderDetailedAnalysis(data) {
         <div class="recommendation-card">
             <div class="recommendation-header">
                 <div>
-                    <h2>${data.symbol} Analysis</h2>
-                    <p style="color: var(--text-secondary)">Processed in ${data.processing_time}s · ${rec.llm_enhanced ? 'AI Enhanced' : 'Rule-based'}</p>
+                    <h2>${escapeHtml(data.symbol)} Analysis</h2>
+                    <p style="color: var(--text-secondary)">Processed in ${data.processing_time || 0}s · ${rec.llm_enhanced ? 'AI Enhanced' : 'Rule-based'}</p>
                 </div>
                 <div class="recommendation-signal signal-${rec.signal || 'hold'}">
                     ${rec.signal ? rec.signal.replace('_', ' ').toUpperCase() : 'HOLD'}
@@ -367,21 +424,21 @@ function renderDetailedAnalysis(data) {
             <div class="recommendation-card" style="background: var(--bg-primary); margin-bottom: 20px;">
                 <h3 style="margin-bottom: 12px;">Final Recommendation</h3>
                 <p style="color: var(--text-secondary); line-height: 1.6;">
-                    ${(rec.reasoning || 'Analysis completed.').replace(/\n/g, '<br>')}
+                    ${escapeHtml(rec.reasoning || 'Analysis completed.').replace(/\n/g, '<br>')}
                 </p>
             </div>
         </div>
 
         <h3 style="margin-bottom: 16px;">Agent Analyses</h3>
         <div class="agent-results">
-            ${agentsHtml}
+            ${agentsHtml || '<p class="analysis-placeholder">No agent results available</p>'}
         </div>
     `;
 }
 
 function createAgentResultCard(icon, title, signal, analysis, findings, llmEnhanced) {
     const signalClass = signal ? `signal-${signal}` : '';
-    const safeAnalysis = analysis ? String(analysis) : 'Analysis pending...';
+    const safeAnalysis = analysis ? String(analysis) : 'Analysis completed.';
     const safeFindings = Array.isArray(findings)
         ? findings.filter(f => f != null).map(f => String(f))
         : [];
@@ -399,10 +456,10 @@ function createAgentResultCard(icon, title, signal, analysis, findings, llmEnhan
             <div class="agent-result-header">
                 <div class="agent-result-title">
                     <span>${icon}</span>
-                    ${title}${llmBadge}
+                    ${escapeHtml(title)}${llmBadge}
                 </div>
                 <span class="agent-signal ${signalClass}">
-                    ${signal ? signal.replace('_', ' ') : 'N/A'}
+                    ${signal ? escapeHtml(signal.replace('_', ' ')) : 'N/A'}
                 </span>
             </div>
             <div class="agent-analysis">
@@ -413,25 +470,28 @@ function createAgentResultCard(icon, title, signal, analysis, findings, llmEnhan
     `;
 }
 
+// ── News Feed ────────────────────────────────────────────────────
 async function loadNewsFeed() {
     const container = document.getElementById('newsFeed');
+    if (!container) return;
 
     try {
-        const response = await fetch(getApiUrl('/market-overview'));
+        const response = await fetchWithTimeout(getApiUrl('/market-overview'), {}, 15000);
         const data = await response.json();
 
-        if (data.status === 'success' && data.market_news) {
+        if (data.status === 'success' && data.market_news && data.market_news.length > 0) {
             renderNewsFeed(data.market_news);
         } else {
-            container.innerHTML = '<p class="analysis-placeholder">No news available</p>';
+            container.innerHTML = '<p class="analysis-placeholder">No news available at this time</p>';
         }
     } catch (error) {
-        container.innerHTML = '<p class="analysis-placeholder">Failed to load news</p>';
+        container.innerHTML = '<p class="analysis-placeholder">News feed temporarily unavailable</p>';
     }
 }
 
 function renderNewsFeed(articles) {
     const container = document.getElementById('newsFeed');
+    if (!container) return;
 
     if (!articles || !articles.length) {
         container.innerHTML = '<p class="analysis-placeholder">No news articles found</p>';
@@ -443,7 +503,7 @@ function renderNewsFeed(articles) {
             <div class="news-header">
                 <div class="news-title">${escapeHtml(article.title)}</div>
                 <span class="news-sentiment sentiment-${article.sentiment || 'neutral'}">
-                    ${article.sentiment || 'neutral'}
+                    ${escapeHtml(article.sentiment || 'neutral')}
                 </span>
             </div>
             <div class="news-description">${escapeHtml(article.description || '')}</div>
@@ -457,6 +517,7 @@ function renderNewsFeed(articles) {
 
 function loadWatchlist() {
     const container = document.getElementById('watchlistContainer');
+    if (!container) return;
 
     if (!watchlist.length) {
         container.innerHTML = '<p class="analysis-placeholder">Your watchlist is empty. Analyze a stock to add it.</p>';
@@ -467,15 +528,15 @@ function loadWatchlist() {
         <div class="indices-grid">
             ${watchlist.map(symbol => `
                 <div class="index-card" onclick="searchInput.value='${symbol}'; analyzeStock();" style="cursor: pointer;">
-                    <div class="index-name">${symbol}</div>
-                    <div class="index-price">Click to analyze</div>
+                    <div class="index-name">${escapeHtml(symbol)}</div>
+                    <div class="index-price" style="font-size:14px; color: var(--accent-blue);">Click to analyze</div>
                 </div>
             `).join('')}
         </div>
     `;
 }
 
-// Chart Management
+// ── Chart Management ─────────────────────────────────────────────
 let mainChartInstance = null;
 let rsiChartInstance = null;
 
@@ -483,20 +544,20 @@ async function loadChart(symbol) {
     const container = document.getElementById('mainChart');
     if (!container) return;
 
-    container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+    container.innerHTML = '<div class="loading"><div class="spinner"></div><p style="margin-top:12px;color:var(--text-secondary)">Loading chart...</p></div>';
 
     try {
-        const response = await fetch(getApiUrl('/chart-data/' + symbol + '?period=6mo'));
+        const response = await fetchWithTimeout(getApiUrl('/chart-data/' + symbol + '?period=6mo'), {}, 30000);
         const data = await response.json();
 
         if (data.status === 'success' && data.candles && data.candles.length > 0) {
             renderChart(data);
         } else {
-            container.innerHTML = '<p class="analysis-placeholder">Chart data unavailable</p>';
+            container.innerHTML = '<p class="analysis-placeholder">Chart data unavailable for this symbol</p>';
         }
     } catch (error) {
-        console.error('Failed to load chart data:', error);
-        container.innerHTML = '<p class="analysis-placeholder">Failed to load chart</p>';
+        console.warn('Chart load failed:', error.message);
+        container.innerHTML = '<p class="analysis-placeholder">Failed to load chart data</p>';
     }
 }
 
@@ -509,6 +570,11 @@ function renderChart(data) {
     if (rsiChartInstance) {
         rsiChartInstance.remove();
         rsiChartInstance = null;
+    }
+
+    if (typeof LightweightCharts === 'undefined') {
+        document.getElementById('mainChart').innerHTML = '<p class="analysis-placeholder">Chart library not loaded</p>';
+        return;
     }
 
     const chartOptions = {
@@ -527,6 +593,8 @@ function renderChart(data) {
 
     // Main chart
     const mainContainer = document.getElementById('mainChart');
+    if (!mainContainer) return;
+
     mainChartInstance = LightweightCharts.createChart(mainContainer, {
         ...chartOptions,
         width: mainContainer.clientWidth,
@@ -545,15 +613,17 @@ function renderChart(data) {
     candleSeries.setData(data.candles);
 
     // Volume series
-    const volumeSeries = mainChartInstance.addHistogramSeries({
-        color: '#00d4ff',
-        priceFormat: { type: 'volume' },
-        priceScaleId: 'volume',
-    });
-    volumeSeries.priceScale().applyOptions({
-        scaleMargins: { top: 0.8, bottom: 0 },
-    });
-    if (data.volume) volumeSeries.setData(data.volume);
+    if (data.volume && data.volume.length) {
+        const volumeSeries = mainChartInstance.addHistogramSeries({
+            color: '#00d4ff',
+            priceFormat: { type: 'volume' },
+            priceScaleId: 'volume',
+        });
+        volumeSeries.priceScale().applyOptions({
+            scaleMargins: { top: 0.8, bottom: 0 },
+        });
+        volumeSeries.setData(data.volume);
+    }
 
     // SMA 20
     if (data.sma20 && data.sma20.length) {
@@ -570,7 +640,7 @@ function renderChart(data) {
     }
 
     // Bollinger Bands
-    if (data.bb_upper && data.bb_lower) {
+    if (data.bb_upper && data.bb_upper.length && data.bb_lower && data.bb_lower.length) {
         mainChartInstance.addLineSeries({
             color: 'rgba(0, 212, 255, 0.3)', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
         }).setData(data.bb_upper);
@@ -593,52 +663,58 @@ function renderChart(data) {
         }).setData(data.rsi);
 
         // RSI reference lines
+        const rsi30 = data.rsi.map(d => ({ time: d.time, value: 30 }));
+        const rsi70 = data.rsi.map(d => ({ time: d.time, value: 70 }));
         rsiChartInstance.addLineSeries({
             color: 'rgba(0, 255, 136, 0.3)', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
-        }).setData(data.rsi.map(d => ({ time: d.time, value: 30 })));
+        }).setData(rsi30);
         rsiChartInstance.addLineSeries({
             color: 'rgba(255, 71, 87, 0.3)', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
-        }).setData(data.rsi.map(d => ({ time: d.time, value: 70 })));
+        }).setData(rsi70);
 
         // Sync time scales
         mainChartInstance.timeScale().subscribeVisibleLogicalRangeChange(range => {
-            if (range) rsiChartInstance.timeScale().setVisibleLogicalRange(range);
+            if (range && rsiChartInstance) rsiChartInstance.timeScale().setVisibleLogicalRange(range);
         });
         rsiChartInstance.timeScale().subscribeVisibleLogicalRangeChange(range => {
-            if (range) mainChartInstance.timeScale().setVisibleLogicalRange(range);
+            if (range && mainChartInstance) mainChartInstance.timeScale().setVisibleLogicalRange(range);
         });
     }
 
     // Handle resize
-    const resizeObserver = new ResizeObserver(entries => {
-        for (const entry of entries) {
-            const { width } = entry.contentRect;
-            if (mainChartInstance) mainChartInstance.applyOptions({ width });
-            if (rsiChartInstance) rsiChartInstance.applyOptions({ width });
-        }
-    });
-    resizeObserver.observe(mainContainer);
+    try {
+        const resizeObserver = new ResizeObserver(entries => {
+            for (const entry of entries) {
+                const { width } = entry.contentRect;
+                if (mainChartInstance) mainChartInstance.applyOptions({ width });
+                if (rsiChartInstance) rsiChartInstance.applyOptions({ width });
+            }
+        });
+        resizeObserver.observe(mainContainer);
+    } catch (e) {
+        // ResizeObserver not supported, ignore
+    }
 }
 
-// Backtest
+// ── Backtest ─────────────────────────────────────────────────────
 async function loadBacktest(symbol) {
     const container = document.getElementById('backtestResults');
     if (!container) return;
 
-    container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+    container.innerHTML = '<div class="loading"><div class="spinner"></div><p style="margin-top:12px;color:var(--text-secondary)">Running backtest...</p></div>';
 
     try {
-        const response = await fetch(getApiUrl('/backtest/' + symbol));
+        const response = await fetchWithTimeout(getApiUrl('/backtest/' + symbol), {}, 45000);
         const data = await response.json();
 
         if (data.status === 'success' && data.metrics) {
             renderBacktestResults(data);
         } else {
-            container.innerHTML = '<p class="analysis-placeholder">Backtest data unavailable</p>';
+            container.innerHTML = '<p class="analysis-placeholder">Backtest data unavailable for this symbol</p>';
         }
     } catch (error) {
-        console.error('Failed to load backtest data:', error);
-        container.innerHTML = '<p class="analysis-placeholder">Failed to load backtest</p>';
+        console.warn('Backtest load failed:', error.message);
+        container.innerHTML = '<p class="analysis-placeholder">Failed to run backtest</p>';
     }
 }
 
@@ -646,38 +722,39 @@ function renderBacktestResults(data) {
     const container = document.getElementById('backtestResults');
     if (!container) return;
 
-    const m = data.metrics;
-    const returnClass = m.total_return_pct >= 0 ? 'positive' : 'negative';
-    const returnColor = m.total_return_pct >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+    const m = data.metrics || {};
+    const returnPct = m.total_return_pct || 0;
+    const returnClass = returnPct >= 0 ? 'positive' : 'negative';
+    const returnColor = returnPct >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
 
     container.innerHTML = `
         <div class="backtest-card">
-            <h3>Strategy Backtest Results (${data.period || '1y'}, ${data.strategy || 'combined'})</h3>
+            <h3>Strategy Backtest Results (${escapeHtml(data.period || '1y')}, ${escapeHtml(data.strategy || 'combined')})</h3>
             <div class="metrics-grid">
                 <div class="metric-card">
                     <div class="metric-value ${returnClass}" style="color: ${returnColor}">
-                        ${m.total_return_pct >= 0 ? '+' : ''}${m.total_return_pct}%
+                        ${returnPct >= 0 ? '+' : ''}${returnPct}%
                     </div>
                     <div class="metric-label">Total Return</div>
                 </div>
                 <div class="metric-card">
-                    <div class="metric-value">${m.win_rate}%</div>
+                    <div class="metric-value">${m.win_rate || 0}%</div>
                     <div class="metric-label">Win Rate</div>
                 </div>
                 <div class="metric-card">
-                    <div class="metric-value">${m.total_trades}</div>
+                    <div class="metric-value">${m.total_trades || 0}</div>
                     <div class="metric-label">Total Trades</div>
                 </div>
                 <div class="metric-card">
-                    <div class="metric-value" style="color: var(--accent-red)">${m.max_drawdown_pct}%</div>
+                    <div class="metric-value" style="color: var(--accent-red)">${m.max_drawdown_pct || 0}%</div>
                     <div class="metric-label">Max Drawdown</div>
                 </div>
                 <div class="metric-card">
-                    <div class="metric-value">${m.sharpe_ratio}</div>
+                    <div class="metric-value">${m.sharpe_ratio || 0}</div>
                     <div class="metric-label">Sharpe Ratio</div>
                 </div>
                 <div class="metric-card">
-                    <div class="metric-value">${m.profit_factor}</div>
+                    <div class="metric-value">${m.profit_factor || 0}</div>
                     <div class="metric-label">Profit Factor</div>
                 </div>
             </div>
@@ -695,49 +772,62 @@ function renderEquityCurve(equityData) {
     const container = document.getElementById('equityCurveChart');
     if (!container) return;
 
-    const chart = LightweightCharts.createChart(container, {
-        layout: {
-            background: { type: 'solid', color: '#1a1a3a' },
-            textColor: '#8888aa',
-        },
-        grid: {
-            vertLines: { color: 'rgba(255,255,255,0.05)' },
-            horzLines: { color: 'rgba(255,255,255,0.05)' },
-        },
-        rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' },
-        timeScale: { borderColor: 'rgba(255,255,255,0.1)' },
-        width: container.clientWidth,
-        height: 200,
-    });
+    try {
+        const chart = LightweightCharts.createChart(container, {
+            layout: {
+                background: { type: 'solid', color: '#1a1a3a' },
+                textColor: '#8888aa',
+            },
+            grid: {
+                vertLines: { color: 'rgba(255,255,255,0.05)' },
+                horzLines: { color: 'rgba(255,255,255,0.05)' },
+            },
+            rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' },
+            timeScale: { borderColor: 'rgba(255,255,255,0.1)' },
+            width: container.clientWidth,
+            height: 200,
+        });
 
-    const series = chart.addLineSeries({
-        color: '#00ff88', lineWidth: 2, priceLineVisible: false,
-    });
+        const series = chart.addLineSeries({
+            color: '#00ff88', lineWidth: 2, priceLineVisible: false,
+        });
 
-    const chartData = equityData.map(d => {
-        const date = new Date(d.date);
-        return { time: Math.floor(date.getTime() / 1000), value: d.equity };
-    }).filter(d => d.time > 0);
+        const chartData = equityData
+            .map(d => {
+                const date = new Date(d.date);
+                const time = Math.floor(date.getTime() / 1000);
+                return time > 0 ? { time, value: d.equity } : null;
+            })
+            .filter(d => d !== null);
 
-    series.setData(chartData);
+        if (chartData.length > 0) {
+            series.setData(chartData);
+        }
+    } catch (e) {
+        console.warn('Equity curve render failed:', e.message);
+    }
 }
 
-// Utility Functions
+// ── Utility Functions ────────────────────────────────────────────
 function formatNumber(num) {
-    if (typeof num !== 'number') return 'N/A';
+    if (typeof num !== 'number' || isNaN(num)) return 'N/A';
     return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function formatTime(isoString) {
     if (!isoString) return '';
-    const date = new Date(isoString);
-    const now = new Date();
-    const diff = now - date;
-
-    if (diff < 60000) return 'Just now';
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-    return date.toLocaleDateString();
+    try {
+        const date = new Date(isoString);
+        if (isNaN(date.getTime())) return '';
+        const now = new Date();
+        const diff = now - date;
+        if (diff < 60000) return 'Just now';
+        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+        if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+        return date.toLocaleDateString();
+    } catch (e) {
+        return '';
+    }
 }
 
 function showLoading(elementId) {
@@ -747,24 +837,32 @@ function showLoading(elementId) {
     }
 }
 
+function clearLoading(elementId) {
+    const el = document.getElementById(elementId);
+    if (el) {
+        el.innerHTML = '';
+    }
+}
+
 function showError(elementId, message) {
     const el = document.getElementById(elementId);
     if (el) {
-        el.innerHTML = `<div class="analysis-placeholder" style="color: var(--accent-red);">${escapeHtml(message)}</div>`;
+        el.innerHTML = `<div class="analysis-placeholder" style="color: var(--accent-red);">
+            <p>${escapeHtml(message)}</p></div>`;
     }
 }
 
 function showNotification(message, type = 'info') {
+    const container = document.getElementById('toastContainer');
+    if (!container) return;
+
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
     toast.textContent = message;
-    const container = document.getElementById('toastContainer');
-    if (container) {
-        container.appendChild(toast);
-        setTimeout(() => toast.classList.add('show'), 10);
-        setTimeout(() => {
-            toast.classList.remove('show');
-            setTimeout(() => toast.remove(), 300);
-        }, 3000);
-    }
+    container.appendChild(toast);
+    setTimeout(() => toast.classList.add('show'), 10);
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
 }
